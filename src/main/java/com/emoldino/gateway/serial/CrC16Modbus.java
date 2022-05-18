@@ -1,7 +1,9 @@
-package com.emoldino.demo.gateway;
+package com.emoldino.gateway.serial;
 
-public class Crc16Modbus2 {
-	
+import com.emoldino.gateway.Gateway;
+
+public class CrC16Modbus {
+
 	private final static short[] auchCRCHi = {
 	        0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0,
 	        0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
@@ -61,7 +63,7 @@ public class Crc16Modbus2 {
 	        0x43, 0x83, 0x41, 0x81, 0x80, 0x40
 	      };
 
-	    public static final int[] calculateCRC(byte[] data, int offset, int len) {
+	    public int[] calculateCRC(byte[] data, int offset, int len) {
 		    int[] crc = {0xFF, 0xFF, 0x00};
 		    int nextByte = 0;
 		    int uIndex; /* will index into CRC lookup*/ /* table */
@@ -79,20 +81,18 @@ public class Crc16Modbus2 {
 		    return crc;
 	    }
 
-    public static void main(String[] args) {
-    	
-    	Gateway cm = new Gateway();
+	public static void main(String[] args) {
 
-    	String strRow = "02008C3043444154412F53435F303030303030332F32303231303130313030303435352F32303231303130313030303530382F30303030382F392F342F303236302F303030382F30303032303030302F6261626162332F41444154412F53435F303030303030332F30303030312F32303231303130313030303530332F302E302C302E3034352C302E352C302E303432E0FD03";
-    	byte[] bytedata = cm.hexStringToByteArray(strRow);
-    	
-    	int[] aa = calculateCRC(bytedata, 0, bytedata.length-3);
-    	
-    	System.out.println("aa[1]="+aa[1]+", aa[0]="+aa[0]+", aa[2]="+aa[2]);
+		CrC16Modbus crc = new CrC16Modbus();
 
-    	int[] bb = calculateCRC(bytedata, 0, bytedata.length-1);
-    	
-    	System.out.println("bb[1]="+bb[1]+", bb[0]="+bb[0]+", bb[2]="+bb[2]);
-    }
-    
+		Gateway gw = new Gateway();
+		
+		String strRow = "02008C3043444154412F53435F303030303030332F32303231303130313030303435352F32303231303130313030303530382F30303030382F392F342F303236302F303030382F30303032303030302F6261626162332F41444154412F53435F303030303030332F30303030312F32303231303130313030303530332F302E302C302E3034352C302E352C302E303432E0FD03";
+    	byte[] bytedata = gw.hexStringToByteArray(strRow);
+
+		int[] aa = crc.calculateCRC(bytedata, 0, bytedata.length-1);
+		System.out.println("aa[1]=0x"+Integer.toHexString(aa[1])+", aa[0]="+Integer.toHexString(aa[0])+", aa[2]="+Integer.toHexString(aa[2]));
+
+	}
+
 }

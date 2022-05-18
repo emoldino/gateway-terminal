@@ -1,4 +1,4 @@
-package com.emoldino.demo.gateway;
+package com.emoldino.gateway;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -30,6 +30,10 @@ import javax.net.ssl.SSLSession;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
+import com.emoldino.gateway.serial.Code;
+import com.emoldino.gateway.serial.Command;
+import com.emoldino.gateway.serial.CrC16Modbus;
+import com.emoldino.gateway.serial.ReadStatus;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -242,18 +246,12 @@ public class Gateway extends Thread {
 //		int sensorNo = 0;
 		int sendLen = 0;
 		
-        byte writeCmd = CMD_SET_TIME;
-        byte readStatus = DATA_FAULT;
+        Command writeCmd = Command.START;
         
-        boolean isSensorOpened = false;	// 센서 열린 상태 
-        
-        
-        
-		// Debug;
-//        String strRow = "02008C3043444154412F53435F303030303030332F32303231303130313030303435352F32303231303130313030303530382F30303030382F392F342F303236302F303030382F30303032303030302F6261626162332F41444154412F53435F303030303030332F30303030312F32303231303130313030303530332F302E302C302E3034352C302E352C302E303432E0FD03";
-//		sb.append(strRow);
-             
-             
+        boolean isSensorOpened = false;	// 센서 열린 상태
+
+		ReadStatus readStatus = ReadStatus.READY;
+
 		while (!this.isInterrupted() && !is_bExit()) {
 
 			try {
@@ -277,116 +275,29 @@ public class Gateway extends Thread {
 			
 			
 			switch(mode) {
-				default:
 				case MODE_WRITE: {
-					
-					// Set Time
-					
-					
-					switch(writeCmd) {
-						default:
-						case CMD_SET_TIME: {
-							
-							String nowtime = getNowTime();
-							byte[] noetime_b = nowtime.getBytes();
-							for(int i = 0; i < noetime_b.length; i++) {
-								noetime_b[i] -= 0x30;
-							}
-							
-							myDebug("[write] send cmd = CMD_SET_TIME");
-							sendLen = createSendFrame( this.out, CMD_SET_TIME, noetime_b);
+
+					switch(writeCmd.getName()) {
+						case "Start" : {
+							myDebug("[write] send cmd = " + writeCmd.getName());
+							//sendLen = sendFrame(Code.SOP.getName() + writeCmd.getName()+ Code.SEP.getName() + tenantId + Code.EOP.getName());
+							sendLen = sendTextFrame(out, Code.SOP.getName() + writeCmd.getName() + Code.EOP.getName());
 							set_serialWatchdog(20000);
-							
 						}
 						break;
-						
-						case CMD_OPEN: {
-							byte[] sendCmd = new byte[1];
-							sendCmd[0] = get_sensorNo();
-							
-							myDebug("[write] send cmd = CMD_OPEN " + get_sensorNo());
-							sendLen = createSendFrame( this.out, CMD_OPEN, sendCmd);
+						default: {
+							myDebug("[write] send cmd = " + writeCmd.getName());
+							sendLen = sendTextFrame(out,Code.SOP.getName() + writeCmd.getName() + Code.EOP.getName());
 							set_serialWatchdog(20000);
-							
-							
-							isSensorOpened = false;
-						
-						}
-						break;
-						
-						case CMD_READ: {
-							byte[] sendCmd = new byte[1];
-							sendCmd[0] = get_sensorNo();
-							
-							myDebug("[write] send cmd = CMD_READ " +get_sensorNo());	
-							sendLen = createSendFrame( this.out, CMD_READ, sendCmd);
-							set_serialWatchdog(20000);
-						
-						}
-						break;
-						
-						case CMD_CLOSE: {
-							
-							byte[] sendCmd = new byte[1];
-							sendCmd[0] = get_sensorNo();
-							
-							myDebug("[write] send cmd = CMD_CLOSE " +get_sensorNo());	
-							sendLen = createSendFrame( this.out, CMD_CLOSE, sendCmd);
-							set_serialWatchdog(20000);
-						
-						}
-						break;
-						
-						case CMD_INCRESE_ID: {
-							byte sno = get_sensorNo();
-							if(  sno++ >= 5) {
-								sno = 1;
-							} 
-							
-							set_sensorNo(sno);
-							
-							myDebug("[write] send cmd = CMD_INCRESE_ID " +get_sensorNo());	
-						}
-						case CMD_READ_COUNT: {
-							
-							byte[] sendCmd = new byte[1];
-							sendCmd[0] = get_sensorNo();
-							
-							myDebug("[write] send cmd = CMD_READ_COUNT " +get_sensorNo());	
-							sendLen = createSendFrame( this.out, CMD_READ_COUNT, sendCmd);
-							set_serialWatchdog(60000);
-						
-						}
-						break;
-						//
-						case CMD_READ_COMPLETE: {
-							
-							byte[] sendCmd = new byte[1];
-							sendCmd[0] = readStatus;
-							
-							myDebug("[write] send cmd = CMD_READ_COMPLETE " +get_sensorNo());	
-							sendLen = createSendFrame( this.out, CMD_READ_COMPLETE, sendCmd);
-							set_serialWatchdog(1000);
-							
-							// CMD_CLOSE로 전환을 위해 강제로 1조산 쉰다. 
-							try {
-								Thread.sleep(1000);
-							} catch (InterruptedException e) {
-								// 루프를 중단하기 위한 인터럽트 였으나,
-								// sleep중 인터럽트가 발생하여 sleep만 빠져나가고 메인 루프는 계속 실행됨.
-								// 플레그를 세팅하여 빠져 나오게 함.
-								set_bExit(true);
-								e.printStackTrace();
-							}
 						}
 					}
-					
+
 //					myDebug("[write] send len = "+sendLen);
 					System.out.println("");
-					
-					
+
+
 					mode = MODE_READ;
-					serialTimer = System.currentTimeMillis(); 
+					serialTimer = System.currentTimeMillis();
 					
 				}
 				break;
@@ -395,326 +306,66 @@ public class Gateway extends Thread {
 				 * 수신 시퀀스 -----------------------------------------------------
 				 */
 				case MODE_READ: {
-					
+
 					// 수신 와치독. 모드 변
 					if (System.currentTimeMillis() - serialTimer > get_serialWatchdog()) {
-						
+
 						myDebug("[read] Time out!! -----------------");
 						System.out.println("");
-						
+
 						mode = MODE_WRITE;
-						
+						readStatus = ReadStatus.READY;
 						continue;
 					}
-					
-					readStatus = DATA_FAULT;
-					
-					
+
 					// 데이터 수신. 
 					byte[] serialBuffer = null;
 					try {
 						int recvLen = this.in.available();
-						if(recvLen > 0) {
+						if (recvLen > 0) {
 							serialBuffer = new byte[recvLen];
 							int readLen = this.in.read(serialBuffer);
-							
-							sb.append(byteArrayToHexString(serialBuffer));
-//							myDebug("[read] InputStream = 0x"+byteArrayToHexString(serialBuffer));
-//							myDebug("[read] recvLen = "+recvLen+", readLen = "+readLen);
-							
-							serialTimer = System.currentTimeMillis(); 
-							
+
+							sb.append(serialBuffer);
+							myDebug("[read] InputStream = " + sb.toString());
+							serialTimer = System.currentTimeMillis();
+
 						}
-						
+
 					} catch (IOException e) {
 						e.printStackTrace();
-						
 						mode = MODE_WRITE;
 					} finally {
 						serialBuffer = null;
 					}
-					
-					
-					
-					
-					
-					//  최소 길이 확인. 
-					if(sb.length() < 8*2) {
 
+					if (sb.toString().startsWith(Code.SOP.name()) && sb.toString().endsWith(Code.EOP.getName())) {
+						parseResponse(sb.toString());
+						sb.delete(0, sb.length());
+					} else if (sb.toString().startsWith(Code.SOP.name()) && sb.toString().indexOf(Code.EOP.getName()) < -1) {
 						continue;
-					}
-					
-					// 적재된거 파싱.
-					String stxLen = sb.substring(0, 3*2);
-					byte[] byteStxLen = hexStringToByteArray(stxLen);
-					
-					pos = 0;
-					
-					// Get STX
-					byte stx = byteStxLen[pos++];
-					if( stx != STX) {
-						myDebug("[read] STX Error = "+ stx+"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-						sb.deleteCharAt(0);
-						sb.deleteCharAt(0);
-						
-						continue;
-					}
-					myDebug("[read] STX OK!");
-					
-					// Get Length
-					
-				
-					
-					int firstI = (byteStxLen[pos++] & 0xFF) << 8;
-					int secondI = (byteStxLen[pos++] & 0xFF);					
-					int dataLen = firstI | secondI ;
-					myDebug("[read] Data Length = "+dataLen);
-					
-					if(sb.length()/2 < LEN_STX + LEN_LENGTH + LEN_CMD + dataLen + LEN_CRC + LEN_ETX ) { // stx + len 2 + cmd + datalen + crc + etx
-						
-						myDebug("[read] ERROR! buffer length("+sb.length()/2+") < frame length("+dataLen + 1+2+1+2+1+")"+"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-//						myDebug("[read] ERROR! Framedata = 0x"+sb.toString());
-						continue;
-					}
-					
-					//  전체 프레임 획득. 
-					String strFrame = sb.substring(0, (LEN_STX + LEN_LENGTH + LEN_CMD + dataLen + LEN_CRC + LEN_ETX)*2);
-					byte[] frame = hexStringToByteArray( strFrame );
-//					myDebug("[read] frame = 0x"+byteArrayToHexString(frame));
-					
-					// Get CMD
-					int recvCmd = frame[pos++];
-					myDebug("[read] recvCmd = 0x"+ Integer.toHexString(recvCmd));
-					
-					// Get Data Frame
-					byte[] data = Arrays.copyOfRange(frame, pos, pos+dataLen);
-					pos += dataLen;
-//					myDebug("[read] data : hex = 0x" + byteArrayToHexString(data));
-					
-					
-					// Get CRC
-					byte[] crcFrame = Arrays.copyOfRange(frame, 0, (pos+2));
-//					myDebug("[read] crcFrame = 0x"+byteArrayToHexString(crcFrame));
-					
-					int[] crcByte = crcModbus.calculateCRC(crcFrame, 0, crcFrame.length);
-					
-					if( crcByte[2] != 0x0000 ) {
-						
-						myDebug("[read] CRC Error! 0x" + Integer.toHexString(crcByte[1])+Integer.toHexString(crcByte[0])+"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-						// CRC 에러 이므로 1바이트 쉬프팅 
-//						sb.deleteCharAt(0);
-//						sb.deleteCharAt(0);
-//						continue;
+					} else if (sb.toString().startsWith(Code.SOP.name()) && sb.toString().indexOf(Code.EOP.getName()) > 0) {
+						String response = sb.substring(0, sb.toString().indexOf(Code.EOP.getName()) + 1);
+						parseResponse(response);
+						sb.delete(0, response.length());
 					} else {
-						myDebug("[read] CRC OK!");
+						sb.delete(0, sb.length());
+						mode = MODE_WRITE;
+						writeCmd = Command.STOP;
 					}
-					pos+=2;
-					
-					
-					// Get ETX
-					if(frame[pos++] != ETX) {
-						myDebug("[read] ERROR ETX!!"+"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-						// 우연히 들어맞은 것이므로 1바이트 쉬프팅 
-						sb.deleteCharAt(0);
-						sb.deleteCharAt(0);
-						continue;
-					} else { 
-						myDebug("[read] ETX OK!");
-					}
-					
-					// 데이터 정상적으로 수신. 
-					readStatus = DATA_OK;
-					
-					// 수신이 잘 되었으므로 
-					// 명령따라 데이터 파싱. --> data
-					myDebug("[read] CMD = "+recvCmd+", data length="+dataLen);
-					switch(recvCmd) {
-						default: {
-							myDebug("[read] Undefined CMD : 0x" + Integer.toHexString(recvCmd));
-							writeCmd = CMD_INCRESE_ID;
-						}
-						break;
-						
-						case CMD_SET_TIME: {
-							//  next open
-							if(data[0] == DATA_OK) {
-								writeCmd = CMD_INCRESE_ID;
-								myDebug("[read] > CMD_SET_TIME : OK --> CMD_INCRESE_ID");
-							} else {
-								myDebug("[read] > CMD_SET_TIME : FAULT --> Retry Set Time");
-							}
-							
-						}
-						break;
-						
-						case CMD_READ_COUNT: {
-							
-							if(dataLen >= 2) {
-
-								int fI = (data[0] & 0xFF) << 8;
-								int sI = (data[1] & 0xFF);					
-								int readCount = fI | sI ;
-								myDebug("[read] CMD_READ_COUNT = "+readCount);
-								
-								if(readCount > 0) {
-									if(isSensorOpened == false) {
-										writeCmd = CMD_OPEN;
-									} else {
-										writeCmd = CMD_READ;
-									}
-								} else {
-									writeCmd = CMD_INCRESE_ID;									
-								}
-								
-								if(dataLen == 16) {
-									// 날짜 비교.
-									// Get Receiver Time 
-									byte[] r_date = Arrays.copyOfRange(data, 2, 16);
-									for(int i = 0; i<r_date.length;i++) {
-										r_date[i] += 0x30;
-									}
-									String recv_date = new String(r_date);
-									myDebug("[read] CMD_READ_COUNT : recv_date="+recv_date);
-									
-									try {
-										Date recvDate = new SimpleDateFormat("yyyyMMddHHmmss").parse(recv_date);
-										Date nowDate = new Date();
-										
-										long recv = recvDate.getTime();
-										long now = nowDate.getTime();
-										
-										if(Math.abs(now - recv) > 60000) {
-											myDebug("[read] CMD_READ_COUNT : Delta time = " + Math.abs(now - recv)+"msec, Now Init Receiver Time");
-											writeCmd = CMD_SET_TIME;									
-											
-										}
-										
-									} catch (ParseException e) {
-	
-										myDebug(e.toString());
-										myDebug("[read] CMD_READ_COUNT : Time data is NULL ");
-									}
-								}
-							} else {
-								myDebug("[read] CMD_READ_COUNT : Data length is mismatch : " + dataLen+", ---> Next write cmd is CMD_READ_COUNT");
-								writeCmd = CMD_INCRESE_ID;
-							}
-							
-						}
-						break;
-						
-						case CMD_OPEN: {
-							// next read							
-							// success 
-							if(data[0] == DATA_OK) {
-								myDebug("[read] > CMD_OPEN : OK" );
-								writeCmd = CMD_READ;
-								
-								isSensorOpened = true;
-								
-							} else {
-								myDebug("[read] > CMD_OPEN : FAULT");
-								writeCmd = CMD_CLOSE;
-								
-								isSensorOpened = false;
-							}
-							
-						}
-						break;
-						
-						case CMD_READ: {
-							// next close
-							if(data.length <= 1) {
-								
-								if(data[0] == DATA_OK) {
-									myDebug("[read] > CMD_READ : DATA_OK --> CMD_CLOSE" );
-									writeCmd = CMD_CLOSE;
-								} else {
-									// 읽을 데이터가 없으므로 CLOSE
-									myDebug("[read] > CMD_READ : DATA_FAULT --> CMD_CLOSE" );
-									writeCmd = CMD_CLOSE;
-								}
-								
-								
-							} else {
-								
-								/* Ver 1 */
-								String strData = new String(data);	// 넣을 데이터. 
-								
-								/* Ver 2 */
-								JSONObject jsonObject = new JSONObject();
-								jsonObject.put("readtime", getNow());
-								jsonObject.put("data", strData);
-								updateRawdata(jsonObject.toString());
-								
-								writeCmd = CMD_READ_COMPLETE;
-							}
-							
-						}
-						break;
-						
-						case CMD_CLOSE: {
-							// next id up-count
-							myDebug("[read] > CMD_CLOSE : " + (data[0] == DATA_OK ? "OK" : "FAULT"));
-							
-							isSensorOpened = false;
-							
-							writeCmd = CMD_INCRESE_ID;
-						}
-						break;
-						
-						
-						
-						case CMD_RECV_ALL: {
-							// next close
-							if(data.length <= 1) {
-								myDebug("[read] > CMD_RECV_ALL : " + (data[0] == DATA_FAULT ? "FAULT" : ("undefined : "+ data[0])) );
-							} else {
-								
-								serialTimer = System.currentTimeMillis(); 
-								
-								String strData = new String(data);	// 넣을 데이터. 
-								updateRawdata(strData);
-								
-								writeCmd = CMD_READ_COMPLETE;
-							}
-						}
-						break;
-						
-						case CMD_READ_COMPLETE: {
-							myDebug("[read] > CMD_READ_COMPLETE : " + (data[0] == DATA_OK ? "OK" : "FAULT"));
-							writeCmd = CMD_READ;					
-						}
-						break;
-					
-					}
-					
-					
-					
-					// 성공하면 해당   길이만큼 지우고 모드 변경
-					sb.delete(0, pos*2);
-					
-					if(sb.length() > 0) {
-						//파싱할 데이터가 남아 있으므로 와치독 초기화 
-						serialTimer = System.currentTimeMillis(); 
-						set_serialWatchdog(30000);	//	30 초 더 기다려 본다. 
-						
-						myDebug("[read] There is still data left. Init read Watchdog");
-						myDebug("[read] buffer len = "+ sb.length()/2);
-						myDebug("-----------------------------------");
-						
-					} else {
-						// 와치독 초기화해서 MODE_WRITE 로 전환 
-						set_serialWatchdog(getDefault_serialWatchdog());	//
-					}
-					
-					
 				}
-				break;
-			
 			}
 	
 		} /* ----------- while */
+	}
+
+	private void parseResponse(String response) {
+		String cmd = response.substring(2, response.length()-1);
+		String[] cmdArr = cmd.split(",");
+		switch(cmdArr[0]) {
+			case "Start":
+				if (cmdArr[])
+		}
 	}
 	
 	private StringBuffer _lastStr = new StringBuffer();
@@ -868,6 +519,19 @@ public class Gateway extends Thread {
      	
     	return ret;
     }
+
+	public int sendTextFrame(OutputStream out,  String cmdLine) {
+
+		CrC16Modbus crcModbus = new CrC16Modbus();
+		myDebug("[write] send frame = " + cmdLine);
+		try {
+			out.write(cmdLine.getBytes());
+			return cmdLine.getBytes().length;
+		} catch (Exception e) {
+			e.printStackTrace();
+			return -1;
+		}
+	}
 	
 	public String getNowTime() {
 		return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));

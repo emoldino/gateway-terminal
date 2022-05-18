@@ -24,7 +24,7 @@ apply plugin:  "application"
 
 group "com.emoldin"
 version "3.0.0-beta"
-mainClassName = "com.emoldino.demo.gateway.Gateway"
+mainClassName = "com.emoldino.gateway.Gateway"
 
 repositories {
     mavenLocal()

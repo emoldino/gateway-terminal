@@ -1,4 +1,4 @@
-package com.emoldino.demo.gateway;
+package com.emoldino.gateway;
 
 /**
  * Hello world!
