@@ -12,16 +12,20 @@ import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
+import java.nio.CharBuffer;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -30,10 +34,10 @@ import javax.net.ssl.SSLSession;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
-import com.emoldino.gateway.serial.Code;
-import com.emoldino.gateway.serial.Command;
-import com.emoldino.gateway.serial.CrC16Modbus;
-import com.emoldino.gateway.serial.ReadStatus;
+import com.emoldino.gateway.serial.*;
+import com.fazecast.jSerialComm.SerialPortDataListener;
+import com.fazecast.jSerialComm.SerialPortEvent;
+import com.google.gson.Gson;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -41,14 +45,17 @@ import com.fazecast.jSerialComm.SerialPort;
 
 
 public class Gateway extends Thread {
-	
+
+
+	private static Gson gson = new Gson();
+	public static Gateway instance = null;
 	private final static String MYDBG = "[Emoldino]";
 	
 	private final static String VERSION = "1.1.2";
 	
 	private final static String SUBURL_SENSOR = "/mms/data/seneor";
 	private final static String SUBURL_DATA = "/mms/data";
-	private final static String SUBURL_HEARTBIT = "/mms/data/heartbit";
+	private final static String SUBURL_HEARTBEAT = "/mms/data/heartbeat";
 	
 	
 	private final static String MODE_READ = "MODE_READ";
@@ -84,8 +91,13 @@ public class Gateway extends Thread {
 	private OutputStream out;
 	
 	private String mode = MODE_WRITE;
-	
-	
+
+	private Command writeCmd = Command.STOP;
+
+	private final ConcurrentHashMap<String, CdataPacket> counterCdataMap = new ConcurrentHashMap<String, CdataPacket>();
+
+	long serialTimer = 0; // System.currentTimeMillis();
+	long serverTimer = 0; // System.currentTimeMillis();
 	
 
 	private boolean _saveLogfile = false;
@@ -126,7 +138,7 @@ public class Gateway extends Thread {
 		return _terminalId;
 	}
 	public void setTerminalId(String terminalId) {
-		this._terminalId = terminalId;
+		this._terminalId = terminalId.length() > 20 ? terminalId.substring(0, 20) : terminalId ;
 	}
 
 	private String _serverUrl;
@@ -152,6 +164,8 @@ public class Gateway extends Thread {
 	public void set_bExit(boolean _bExit) {
 		this._bExit = _bExit;
 	}
+
+	private StringBuffer sb = new StringBuffer();
 	
 	public String _hostname;
 
@@ -170,15 +184,13 @@ public class Gateway extends Thread {
 
 	public Gateway(String serialPort, String serialWatchdog, String serverUrl, String serverWatchdog, String isSave) throws UnknownHostException {
 
-		
+		Gateway.instance = this;
 		try {
 			setSaveLogfile(Boolean.parseBoolean(isSave));
 		} catch(Exception e) {
 			setSaveLogfile(true);
 		}
-		
-		
-		
+
 		this._hostname = InetAddress.getLocalHost().getHostName();
 		
 		setTerminalId(_hostname);
@@ -199,31 +211,62 @@ public class Gateway extends Thread {
 
 		// Serial Open
 		try {
-			comPort = SerialPort.getCommPort(serialPort);
+			crcModbus = new CrC16Modbus();
+			dba = new Dba();
+			setServerUrl(serverUrl);
 
+			comPort = SerialPort.getCommPort(serialPort);
 			comPort.setBaudRate(Integer.parseInt("115200"));
+			comPort.setParity(0);
+			comPort.setNumDataBits(8);
+			comPort.setNumStopBits(1);
+			comPort.setFlowControl(SerialPort.FLOW_CONTROL_DISABLED);
 			comPort.openPort();
 			comPort.setComPortTimeouts(SerialPort.TIMEOUT_NONBLOCKING, 0, 0);
 
-			// 입력 스트림
-			in = comPort.getInputStream();
+			if (comPort.isOpen()) {
 
-			// 출력 스트림
-			out = comPort.getOutputStream();
 
-			myDebug("[OK]serialPort is Opened : " + serialPort);
+				// 입력 스트림
+				in = comPort.getInputStream();
+				// 출력 스트림
+				out = comPort.getOutputStream();
+
+				myDebug("[OK]serialPort is Opened : " + serialPort);
+
+				comPort.addDataListener(new SerialPortDataListener() {
+					@Override
+					public int getListeningEvents() {
+						System.out.println("USB ComPort is now available !!!");
+						Gateway.instance.sendTextFrame(Gateway.instance.out, Constant.SOP + Constant.STOP + Constant.EOP);
+						return SerialPort.LISTENING_EVENT_DATA_AVAILABLE;
+					}
+
+					@Override
+					public void serialEvent(SerialPortEvent serialPortEvent) {
+
+						myDebug("USB ComPort read data is available !!! : " + gson.toJson(serialPortEvent));
+
+					}
+				});
+
+			} else {
+				try { comPort.closePort(); } catch(Exception ex) { ex.printStackTrace(); }
+				myDebug("[NG]serialPort is not Opened : System Exit :" + serialPort);
+				System.exit(-1);
+			}
 
 		} catch (Exception e) {
 			e.printStackTrace();
 			return;
 		}
+	}
 
-		setServerUrl(serverUrl);
-		
-		crcModbus = new CrC16Modbus();
-		dba = new Dba();
-
-
+	public void freeze() throws InterruptedException {
+		Object obj = new Object();
+		synchronized (obj) {
+			obj.wait();
+		}
 	}
 
 	@Override
@@ -236,17 +279,14 @@ public class Gateway extends Thread {
 	public void run() {
 		
 
-		long serialTimer = 0; // System.currentTimeMillis();
-		long serverTimer = 0; // System.currentTimeMillis();
+
 
 		int pos = 0;
-		
-		StringBuffer sb = new StringBuffer();
 		
 //		int sensorNo = 0;
 		int sendLen = 0;
 		
-        Command writeCmd = Command.START;
+
         
         boolean isSensorOpened = false;	// 센서 열린 상태
 
@@ -269,105 +309,196 @@ public class Gateway extends Thread {
 			if (System.currentTimeMillis() - serverTimer > get_serverWatchdog()) {
 				serverTimer = System.currentTimeMillis(); 
 				
-				reportHeartbit();
-				
+				this.reportHeartbeat();
 			}
-			
-			
-			switch(mode) {
-				case MODE_WRITE: {
 
-					switch(writeCmd.getName()) {
-						case "Start" : {
-							myDebug("[write] send cmd = " + writeCmd.getName());
-							//sendLen = sendFrame(Code.SOP.getName() + writeCmd.getName()+ Code.SEP.getName() + tenantId + Code.EOP.getName());
-							sendLen = sendTextFrame(out, Code.SOP.getName() + writeCmd.getName() + Code.EOP.getName());
-							set_serialWatchdog(20000);
+			try {
+				switch (mode) {
+					case MODE_WRITE: {
+
+						switch (writeCmd.getName()) {
+							case Constant.START: {
+								myDebug("[write] send cmd = " + writeCmd.getName());
+								sendStart();
+								set_serialWatchdog(20000);
+							}
+							break;
+							default: {
+								myDebug("[write] send cmd = " + writeCmd.getName());
+								sendTextFrame(out, Code.SOP.getName() + writeCmd.getName() + Code.EOP.getName());
+								set_serialWatchdog(20000);
+							}
 						}
-						break;
-						default: {
-							myDebug("[write] send cmd = " + writeCmd.getName());
-							sendLen = sendTextFrame(out,Code.SOP.getName() + writeCmd.getName() + Code.EOP.getName());
-							set_serialWatchdog(20000);
-						}
+
+						mode = MODE_READ;
+						serialTimer = System.currentTimeMillis();
+
 					}
+					break;
 
-//					myDebug("[write] send len = "+sendLen);
-					System.out.println("");
+					/**
+					 * 수신 시퀀스 -----------------------------------------------------
+					 */
+					case MODE_READ: {
 
 
-					mode = MODE_READ;
-					serialTimer = System.currentTimeMillis();
-					
-				}
-				break;
-				
-				/**
-				 * 수신 시퀀스 -----------------------------------------------------
-				 */
-				case MODE_READ: {
+						// 수신 와치독. 모드 변
+//						if (System.currentTimeMillis() - serialTimer < get_serialWatchdog()) {
+//
+//							myDebug("[read] Time out!! -----------------");
+//							System.out.println("");
+//							continue;
+//						}
 
-					// 수신 와치독. 모드 변
-					if (System.currentTimeMillis() - serialTimer > get_serialWatchdog()) {
+						// 데이터 수신.
+						try {
+							int recvLen = 0 ;
+							byte[] serialBuffer = new byte[1024];
+							while((recvLen = this.in.available()) > 0 && (recvLen = this.in.read(serialBuffer)) > 0) {
 
-						myDebug("[read] Time out!! -----------------");
-						System.out.println("");
+								sb.append(new String(serialBuffer, 0, recvLen));
+								myDebug("[READ] InputStream = " + sb.toString());
+							}
 
-						mode = MODE_WRITE;
-						readStatus = ReadStatus.READY;
-						continue;
-					}
-
-					// 데이터 수신. 
-					byte[] serialBuffer = null;
-					try {
-						int recvLen = this.in.available();
-						if (recvLen > 0) {
-							serialBuffer = new byte[recvLen];
-							int readLen = this.in.read(serialBuffer);
-
-							sb.append(serialBuffer);
-							myDebug("[read] InputStream = " + sb.toString());
+						} catch (IOException e) {
+							e.printStackTrace();
+						} finally {
 							serialTimer = System.currentTimeMillis();
-
 						}
 
-					} catch (IOException e) {
-						e.printStackTrace();
-						mode = MODE_WRITE;
-					} finally {
-						serialBuffer = null;
-					}
+						myDebug("[READ]" + sb.toString());
+						byte[] packets = sb.toString().getBytes();
+						String cmdLine = sb.toString(); // for debugging
 
-					if (sb.toString().startsWith(Code.SOP.name()) && sb.toString().endsWith(Code.EOP.getName())) {
-						parseResponse(sb.toString());
-						sb.delete(0, sb.length());
-					} else if (sb.toString().startsWith(Code.SOP.name()) && sb.toString().indexOf(Code.EOP.getName()) < -1) {
-						continue;
-					} else if (sb.toString().startsWith(Code.SOP.name()) && sb.toString().indexOf(Code.EOP.getName()) > 0) {
-						String response = sb.substring(0, sb.toString().indexOf(Code.EOP.getName()) + 1);
-						parseResponse(response);
-						sb.delete(0, response.length());
-					} else {
-						sb.delete(0, sb.length());
-						mode = MODE_WRITE;
-						writeCmd = Command.STOP;
+						if (sb.toString().isEmpty()) {
+							continue;
+						}
+
+						int end = sb.toString().indexOf(Constant.LF);
+						if (cmdLine.startsWith(Constant.SOP)  && end > 0 && end < sb.length()-2) {
+							String response = "";
+							if (packets[end+1] == 0) {
+								response = sb.substring(0, end + 1);
+								parseResponse(response);
+								sb.delete(0, end+2);
+							} else {
+								response = sb.substring(0, end + 1);
+								parseResponse(response);
+								sb.delete(0, end+1);
+							}
+
+						} else if (cmdLine.startsWith(Constant.SOP) && (packets[sb.length()-1] == Constant.LF || (packets[sb.length()-2] == Constant.LF && packets[sb.length()-1] == 0))) {
+							String response = sb.substring(0, end + 1);
+							parseResponse(response);
+							sb.delete(0, sb.length());
+						} else if (cmdLine.startsWith(Constant.SOP)  && sb.toString().indexOf(Constant.LF) < 0) {
+							// Do nothing
+						}  else {
+							sb.delete(0, sb.length());
+//							mode = MODE_WRITE;
+//							writeCmd = Command.STOP;
+//							throw new Exception("Unknown Read data format: Please checkt this command from BLE Receiver: ");
+						}
 					}
 				}
+			} catch(Exception ex) {
+				ex.printStackTrace();
 			}
 	
 		} /* ----------- while */
 	}
 
-	private void parseResponse(String response) {
-		String cmd = response.substring(2, response.length()-1);
-		String[] cmdArr = cmd.split(",");
+	public void sendStart() {
+		Gateway.instance.sendTextFrame(Gateway.instance.out, Constant.SOP + Constant.START + Constant.SEP + Gateway.instance.getTerminalId() + Constant.EOP);
+	}
+
+	public void sendStop() {
+		Gateway.instance.sendTextFrame(Gateway.instance.out, Constant.SOP + Constant.STOP+ Constant.EOP);
+	}
+	private void parseResponse(String response) throws Exception {
+		myDebug("received from BLE receiver : " + response);
+		String cmd = response.substring(Constant.SOP.length(), response.length()-Constant.EOP.length());
+		String[] cmdArr = cmd.split(Constant.SEP);
 		switch(cmdArr[0]) {
-			case "Start":
-				if (cmdArr[])
+			case Constant.START:
+				if (cmdArr.length >1 && cmdArr[1].equals(Constant.OK)) {
+					myDebug("Start OK");
+				} else {
+					sendStop();
+					myDebug("Start NG");
+				}
+				break;
+			case Constant.STOP:
+				if (cmdArr.length >1 && cmdArr[1].equals(Constant.OK)) {
+					sendStart();
+					myDebug("Stop OK");
+				} else { //ToDo : What should I do in this case ????
+					sendStart();
+					myDebug("Stop NG");
+				}
+				break;
+			case Constant.CONNECT:
+			case Constant.DISCONNECT:
+				break;
+			case Constant.CDATA:
+				CdataPacket cdataPacket = new CdataPacket(cmdArr[1], Integer.parseInt(cmdArr[2]), Integer.parseInt(cmdArr[3]),
+						response.substring(Constant.SOP.length() +
+											Constant.CDATA.length() + Constant.SEP.length() +
+											cmdArr[1].length() + Constant.SEP.length() +
+											cmdArr[2].length() + Constant.SEP.length() +
+											cmdArr[3].length() + Constant.SEP.length() , response.length()-Constant.EOP.length()));
+				collectCdataPacket(cdataPacket);
+				break;
+			default:
+				// Skip
+//				mode = MODE_WRITE;
+//				writeCmd = Command.STOP;
 		}
 	}
-	
+
+	public void sendAck(Command cmd, Ack ack) throws Exception {
+		String datetime = LocalDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+		String ackResponse = Constant.SOP + cmd.getName() + Constant.SEP + ack.getName() + Constant.SEP + datetime + Constant.EOP;
+		sendTextFrame(out, ackResponse);
+	}
+
+	private void sendCdataToMms(CdataPacket cdata) throws Exception {
+		JSONObject jsonObject = new JSONObject();
+		jsonObject.put("readtime", getNow());
+		jsonObject.put("data", cdata.getData());
+		updateRawdata(jsonObject.toString());
+	}
+	private void collectCdataPacket(CdataPacket cdataPacket) throws Exception {
+		myDebug(cdataPacket.toString());
+		if (cdataPacket.getIndex() == 1) {
+			counterCdataMap.remove(cdataPacket.getCounterId());
+			if (cdataPacket.getIndex() == cdataPacket.getTotal()) {
+				sendCdataToMms(cdataPacket);
+			} else {
+				counterCdataMap.put(cdataPacket.getCounterId(), cdataPacket);
+			}
+			sendAck(Command.CDATA, Ack.OK);
+		} else {
+			CdataPacket cdata = counterCdataMap.get(cdataPacket.getCounterId());
+			if (cdata == null) {
+				sendAck(Command.CDATA, Ack.NG);
+				throw new Exception("The previous cdata packet is null : Please check protocols...");
+			}
+			if (cdataPacket.getIndex() != cdata.getIndex()+1 || cdataPacket.getTotal() != cdata.getTotal()) {
+				sendAck(Command.CDATA, Ack.NG);
+				throw new Exception("The cdata packet oder is broken...");
+			}
+			cdata.setIndex(cdataPacket.getIndex());
+			cdata.setData(cdata.getData() + cdataPacket.getData());
+			myDebug("cdata : " + cdata.getData());
+			counterCdataMap.put(cdata.getCounterId(), cdata);
+			sendAck(Command.CDATA, Ack.OK);
+
+			if (cdata.getIndex() == cdata.getTotal()) {
+				sendCdataToMms(cdata);
+			}
+		}
+	}
 	private StringBuffer _lastStr = new StringBuffer();
 	public void myDebug(String str) {
 		if( !_lastStr.toString().equals(str)) {
@@ -520,17 +651,20 @@ public class Gateway extends Thread {
     	return ret;
     }
 
-	public int sendTextFrame(OutputStream out,  String cmdLine) {
+	public void sendTextFrame(OutputStream out,  String cmdLine) {
 
 		CrC16Modbus crcModbus = new CrC16Modbus();
 		myDebug("[write] send frame = " + cmdLine);
+
 		try {
 			out.write(cmdLine.getBytes());
-			return cmdLine.getBytes().length;
+			out.flush();
 		} catch (Exception e) {
 			e.printStackTrace();
-			return -1;
+		} finally {
+			mode = MODE_READ;
 		}
+
 	}
 	
 	public String getNowTime() {
@@ -727,8 +861,7 @@ public class Gateway extends Thread {
 			
 	}
 	
-	public int updateRawdata(String data) {
-		int ret = -1;
+	public void updateRawdata(String data) {
 		
 		JSONObject json = new JSONObject(data);
 		
@@ -752,29 +885,33 @@ public class Gateway extends Thread {
 		
 		
 		jsonObject.put("rawdata", jsonarray);
-		
-		ret = sendREST(getServerUrl()+SUBURL_DATA, jsonObject.toString()); 
-		
-		if( ret != 200) {
-			
-			myDebug("[updateRawdataArray] Failed to connect to server !!!!!!!!!!!!!!!!!!!!!!!!!!!");
-			
-			dba.updateRecvData(jsonarray, false); 
-			
-		} else {
-			System.out.println("updateRecvData="+dba.updateRecvData(jsonarray, true));
-			
-			// Update
-			
-			System.out.println("[updateSensorReadTime] : "+dba.updateSensorReadTime(Integer.toString(get_sensorNo()), json.get("readtime").toString()));
-		}
-		
-		return ret;
+
+		new Runnable() {
+			@Override
+			public void run() {
+				int ret = sendREST(getServerUrl()+SUBURL_DATA, jsonObject.toString());
+
+				if( ret != 200) {
+
+					myDebug("[updateRawdataArray] Failed to connect to server !!!!!!!!!!!!!!!!!!!!!!!!!!!");
+
+					dba.updateRecvData(jsonarray, false);
+
+				} else {
+					System.out.println("updateRecvData="+dba.updateRecvData(jsonarray, true));
+
+					// Update
+
+					System.out.println("[updateSensorReadTime] : "+dba.updateSensorReadTime(Integer.toString(get_sensorNo()), json.get("readtime").toString()));
+					serverTimer = System.currentTimeMillis();
+				}
+			}
+		}.run() ;
+
 	}
 	
 	
-	public boolean reportHeartbit() {
-		boolean ret = false;;
+	public void reportHeartbeat() {
 	
 		
 		// /mms/data
@@ -796,15 +933,16 @@ public class Gateway extends Thread {
 		
 		items.put("list", dba.getSensorList());
 		jsonObject.put("sensor", items);
-		
-		
-		int retCode = sendREST(getServerUrl()+SUBURL_HEARTBIT, jsonObject.toString()); 
-		ret = (retCode == 200 ? true : false);
 
-		myDebug("[reportHeartbit] "+jsonObject.toString());
-		myDebug("[reportHeartbit] Send : "+(ret == true ? "Success" : "Fail"));
-		
-		return ret;
+		new Runnable() {
+			@Override
+			public void run() {
+				int retCode = sendREST(getServerUrl()+SUBURL_HEARTBEAT, jsonObject.toString());
+
+				myDebug("[reportHeartbeat] "+jsonObject.toString());
+				myDebug("[reportHeartbeat] Send : "+(retCode == 200 ? "Success" : "Fail"));
+			}
+		}.run() ;
 	}
 	
 	
@@ -839,51 +977,6 @@ public class Gateway extends Thread {
 			System.out.println(" ");
 			
 		}
-		
-		
-		
-
-		/* Debug -------------------------------------------------------------------------------- */
-		
-//		try {
-////			Gateway gw = new Gateway("COM3", "3000", "http://49.247.200.147", "60000", "true");
-//			Gateway gw = new Gateway("COM3", "3000", "https://dev-feature.emoldino.com", "60000", "true"); 
-////			gw.run();
-//			StringBuffer sb = new StringBuffer();
-//			sb.append("test1");
-//			gw.saveLog(sb);
-//			
-//			
-//			StringBuffer sb2 = new StringBuffer();
-//			sb2.append("test2");
-//			gw.saveLog(sb2);
-//			
-//		} catch (UnknownHostException e) {
-//			// TODO Auto-generated catch block
-//			e.printStackTrace();
-//		}
-		
-		
-		
-		
-		
-		
-//		Gateway gw = new Gateway();
-//		gw.setTerminalId("Test1-JB-terminal");
-//		gw.setServerUrl("https://dev-feature.emoldino.com");
-////		gw.setServerUrl("http://49.247.200.147");
-//		
-//		gw.reportHeartbit();
-		
-		
-		
-//		JSONObject jsonObject = new JSONObject();
-//		jsonObject.put("readtime", gw.getNow());
-//		jsonObject.put("data", "CDATA/SC_0000004/20211203180545/20211203190545/00009/9/4/042204170388036503480336/0140/09560958/b6ab/ADATA/SC_0000004/00001/20211203181344/0.5,0.031,2.6,0.053,3.1,0.022,5.2,0.019,80.9,0.000,81.1,0.027,81.4,0.033/TEST/0.0/81.8/95.8/177.6/191.6/273.4/287.4/369.2/383.2/465.0/479.0/560.8/574.8/656.7/670.4/752.4/766.2/848.2");
-//		gw.updateRawdata(jsonObject.toString());
-		
-	
-
 	}
 
 }

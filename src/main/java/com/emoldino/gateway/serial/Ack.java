@@ -1,15 +1,12 @@
 package com.emoldino.gateway.serial;
 
-public enum Command {
-    STOP("Stop"),
-    START("Start"),
-    CDATA("Cdata"),
-    CONNECT("Connect"),
-    DISCONNECT("Disconnect");
+public enum Ack {
+    OK("OK"),
+    NG("NG");
 
 
     private String name;
-    Command(String name) {
+    Ack(String name) {
         this.name = name;
     }
 

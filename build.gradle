@@ -35,11 +35,16 @@ repositories {
 
 dependencies {
 
+    compileOnly "org.projectlombok:lombok:1.18.24"
+    annotationProcessor "org.projectlombok:lombok:1.18.24"
+    implementation "com.google.code.gson:gson:2.9.0"
     implementation "com.fazecast:jSerialComm:2.9.1"
     implementation "org.json:json:20210307"
     implementation "mysql:mysql-connector-java:8.0.29"
     implementation "commons-codec:commons-codec:1.15"
     testImplementation "junit:junit:4.11"
+    testCompileOnly "org.projectlombok:lombok:1.18.24"
+    testAnnotationProcessor "org.projectlombok:lombok:1.18.24"
 }
 
 test {

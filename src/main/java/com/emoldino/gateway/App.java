@@ -30,7 +30,7 @@ public class App
 		
 //		gw.setServerUrl("http://49.247.200.147");
 		
-		gw.reportHeartbit();
+		gw.reportHeartbeat();
         
     }
     
