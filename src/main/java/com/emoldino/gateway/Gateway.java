@@ -423,6 +423,7 @@ public class Gateway extends Thread {
 			case Constant.START:
 				if (cmdArr.length >1 && cmdArr[1].equals(Constant.OK)) {
 					myDebug("Start OK");
+					writeCmd = Command.BYPASS;
 				} else {
 					sendStop();
 					myDebug("Start NG");
@@ -450,15 +451,18 @@ public class Gateway extends Thread {
 				collectCdataPacket(cdataPacket);
 				break;
 			default:
-				// Skip
-//				mode = MODE_WRITE;
-//				writeCmd = Command.STOP;
+				if (!writeCmd.getName().equals(Constant.BYPASS)) {
+					mode = MODE_WRITE;
+					writeCmd = Command.STOP;
+				} else { //Bypass
+					//skip
+				}
 		}
 	}
 
 	public void sendAck(Command cmd, Ack ack) throws Exception {
 		String datetime = LocalDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
-		String ackResponse = Constant.SOP + cmd.getName() + Constant.SEP + ack.getName() + Constant.SEP + datetime + Constant.EOP;
+		String ackResponse = Constant.SOP + cmd.getName() + Constant.SEP + ack.getName() + Constant.SEP + Constant.TIME + Constant.SEP + datetime + Constant.EOP;
 		sendTextFrame(out, ackResponse);
 	}
 

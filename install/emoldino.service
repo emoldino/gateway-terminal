@@ -1,0 +1,21 @@
+
+[Unit]
+Description=Emoldino Gateway
+After=network.target
+[Install]
+WantedBy=multi-user.target
+[Service]
+User=root
+Group=root
+PermissionsStartOnly=true
+ExecStart=/home/emoldino/Emoldino/startGW.sh
+ExecStop=/home/emoldino/Emoldino/stopGW.sh
+# 서비스 실행 파일 설정
+WorkingDirectory=/home/emoldino/Emoldino
+TimeoutSec=600
+# restart 조건 ( in-failure : 오류 발생시 재시작, always : 항상)
+Restart=on-failure
+# 60초 주기. 
+RestartSec=60
+RuntimeDirectoryMode=755
+

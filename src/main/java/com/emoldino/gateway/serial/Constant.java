@@ -14,6 +14,11 @@ public class Constant {
     public static final String CDATA = "Cdata";
     public static final String CONNECT = "Connect";
     public static final String DISCONNECT = "Disconnect";
+    public static final String INVALID = "Invalid";
+
+    public static final String BYPASS = "Bypass";
+
+    public static final String TIME = "Time";
     public static final String OK = "OK";
     public static final String NG = "NG";
 

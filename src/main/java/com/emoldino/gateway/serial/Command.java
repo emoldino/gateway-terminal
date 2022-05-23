@@ -5,7 +5,8 @@ public enum Command {
     START("Start"),
     CDATA("Cdata"),
     CONNECT("Connect"),
-    DISCONNECT("Disconnect");
+    DISCONNECT("Disconnect"),
+    BYPASS("Bypass");
 
 
     private String name;
