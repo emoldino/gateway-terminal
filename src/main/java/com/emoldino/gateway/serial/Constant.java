@@ -15,6 +15,7 @@ public class Constant {
     public static final String CONNECT = "Connect";
     public static final String DISCONNECT = "Disconnect";
     public static final String INVALID = "Invalid";
+    public static final String ERROR = "Error";
 
     public static final String BYPASS = "Bypass";
 

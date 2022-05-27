@@ -51,7 +51,7 @@ public class Gateway extends Thread {
 	public static Gateway instance = null;
 	private final static String MYDBG = "[Emoldino]";
 	
-	private final static String VERSION = "1.1.2";
+	private final static String VERSION = "3.0.0";
 	
 	private final static String SUBURL_SENSOR = "/mms/data/seneor";
 	private final static String SUBURL_DATA = "/mms/data";
@@ -92,7 +92,7 @@ public class Gateway extends Thread {
 	
 	private String mode = MODE_WRITE;
 
-	private Command writeCmd = Command.STOP;
+	private Command writeCmd = Command.START;
 
 	private final ConcurrentHashMap<String, CdataPacket> counterCdataMap = new ConcurrentHashMap<String, CdataPacket>();
 
@@ -168,6 +168,8 @@ public class Gateway extends Thread {
 	private StringBuffer sb = new StringBuffer();
 	
 	public String _hostname;
+
+	private int invalidCnt = 0;
 
 	public Gateway(){
 		
@@ -245,7 +247,7 @@ public class Gateway extends Thread {
 					@Override
 					public void serialEvent(SerialPortEvent serialPortEvent) {
 
-						myDebug("USB ComPort read data is available !!! : " + gson.toJson(serialPortEvent));
+//						myDebug("USB ComPort read data is available !!! : " + gson.toJson(serialPortEvent));
 
 					}
 				});
@@ -320,19 +322,24 @@ public class Gateway extends Thread {
 							case Constant.START: {
 								myDebug("[write] send cmd = " + writeCmd.getName());
 								sendStart();
-								set_serialWatchdog(20000);
+								set_serialWatchdog(5000);
+							}
+							break;
+							case Constant.CDATA: {
+								myDebug("[write] send cmd = " + writeCmd.getName());
+								sendAck(Command.CDATA, Ack.OK);
+								set_serialWatchdog(1000);
 							}
 							break;
 							default: {
 								myDebug("[write] send cmd = " + writeCmd.getName());
 								sendTextFrame(out, Code.SOP.getName() + writeCmd.getName() + Code.EOP.getName());
-								set_serialWatchdog(20000);
+								set_serialWatchdog(5000);
 							}
 						}
 
 						mode = MODE_READ;
 						serialTimer = System.currentTimeMillis();
-
 					}
 					break;
 
@@ -343,12 +350,12 @@ public class Gateway extends Thread {
 
 
 						// 수신 와치독. 모드 변
-//						if (System.currentTimeMillis() - serialTimer < get_serialWatchdog()) {
-//
-//							myDebug("[read] Time out!! -----------------");
-//							System.out.println("");
-//							continue;
-//						}
+						if (System.currentTimeMillis() - serialTimer < get_serialWatchdog()) {
+
+							myDebug("[read] Time out!! -----------------");
+							System.out.println("");
+							continue;
+						}
 
 						// 데이터 수신.
 						try {
@@ -357,13 +364,9 @@ public class Gateway extends Thread {
 							while((recvLen = this.in.available()) > 0 && (recvLen = this.in.read(serialBuffer)) > 0) {
 
 								sb.append(new String(serialBuffer, 0, recvLen));
-								myDebug("[READ] InputStream = " + sb.toString());
 							}
-
 						} catch (IOException e) {
 							e.printStackTrace();
-						} finally {
-							serialTimer = System.currentTimeMillis();
 						}
 
 						myDebug("[READ]" + sb.toString());
@@ -394,10 +397,11 @@ public class Gateway extends Thread {
 						} else if (cmdLine.startsWith(Constant.SOP)  && sb.toString().indexOf(Constant.LF) < 0) {
 							// Do nothing
 						}  else {
-							sb.delete(0, sb.length());
+
 //							mode = MODE_WRITE;
 //							writeCmd = Command.STOP;
-//							throw new Exception("Unknown Read data format: Please checkt this command from BLE Receiver: ");
+							myDebug("[ERROR} Unknown Read data format: Please checkt this command from BLE Receiver: " + sb.toString());
+							sb.delete(0, sb.length());
 						}
 					}
 				}
@@ -425,17 +429,19 @@ public class Gateway extends Thread {
 					myDebug("Start OK");
 					writeCmd = Command.BYPASS;
 				} else {
-					sendStop();
-					myDebug("Start NG");
+					myDebug("Start NG"); //Already Started
+					writeCmd = Command.BYPASS;
 				}
 				break;
 			case Constant.STOP:
 				if (cmdArr.length >1 && cmdArr[1].equals(Constant.OK)) {
-					sendStart();
+					mode = MODE_WRITE;
+					writeCmd = Command.START;
 					myDebug("Stop OK");
 				} else { //ToDo : What should I do in this case ????
-					sendStart();
-					myDebug("Stop NG");
+					mode = MODE_WRITE;
+					writeCmd = Command.START;
+					myDebug("Stop NG"); //Already Stopped
 				}
 				break;
 			case Constant.CONNECT:
@@ -449,13 +455,20 @@ public class Gateway extends Thread {
 											cmdArr[2].length() + Constant.SEP.length() +
 											cmdArr[3].length() + Constant.SEP.length() , response.length()-Constant.EOP.length()));
 				collectCdataPacket(cdataPacket);
+				writeCmd = Command.BYPASS;
 				break;
 			default:
 				if (!writeCmd.getName().equals(Constant.BYPASS)) {
-					mode = MODE_WRITE;
-					writeCmd = Command.STOP;
+					serialTimer = System.currentTimeMillis();
+					invalidCnt++;
+					myDebug("[Unknown Command] " + cmdArr[0] + ":" + invalidCnt);
+					if (invalidCnt > 3) {
+						mode = MODE_WRITE;
+						writeCmd = Command.STOP;
+						invalidCnt = 0;
+					}
 				} else { //Bypass
-					//skip
+					writeCmd = Command.STOP;
 				}
 		}
 	}
@@ -481,7 +494,8 @@ public class Gateway extends Thread {
 			} else {
 				counterCdataMap.put(cdataPacket.getCounterId(), cdataPacket);
 			}
-			sendAck(Command.CDATA, Ack.OK);
+			mode = MODE_WRITE;
+			writeCmd = Command.CDATA;
 		} else {
 			CdataPacket cdata = counterCdataMap.get(cdataPacket.getCounterId());
 			if (cdata == null) {
@@ -496,11 +510,12 @@ public class Gateway extends Thread {
 			cdata.setData(cdata.getData() + cdataPacket.getData());
 			myDebug("cdata : " + cdata.getData());
 			counterCdataMap.put(cdata.getCounterId(), cdata);
-			sendAck(Command.CDATA, Ack.OK);
 
 			if (cdata.getIndex() == cdata.getTotal()) {
 				sendCdataToMms(cdata);
 			}
+			mode = MODE_WRITE;
+			writeCmd = Command.CDATA;
 		}
 	}
 	private StringBuffer _lastStr = new StringBuffer();
@@ -666,9 +681,7 @@ public class Gateway extends Thread {
 		} catch (Exception e) {
 			e.printStackTrace();
 		} finally {
-			mode = MODE_READ;
 		}
-
 	}
 	
 	public String getNowTime() {
