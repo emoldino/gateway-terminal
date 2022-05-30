@@ -94,6 +94,8 @@ public class Gateway extends Thread {
 
 	private Command writeCmd = Command.START;
 
+	private boolean isBypass = false;
+
 	private final ConcurrentHashMap<String, CdataPacket> counterCdataMap = new ConcurrentHashMap<String, CdataPacket>();
 
 	long serialTimer = 0; // System.currentTimeMillis();
@@ -427,20 +429,22 @@ public class Gateway extends Thread {
 			case Constant.START:
 				if (cmdArr.length >1 && cmdArr[1].equals(Constant.OK)) {
 					myDebug("Start OK");
-					writeCmd = Command.BYPASS;
+					isBypass = true;
 				} else {
 					myDebug("Start NG"); //Already Started
-					writeCmd = Command.BYPASS;
+					isBypass = true;
 				}
 				break;
 			case Constant.STOP:
 				if (cmdArr.length >1 && cmdArr[1].equals(Constant.OK)) {
 					mode = MODE_WRITE;
 					writeCmd = Command.START;
+					isBypass = false;
 					myDebug("Stop OK");
-				} else { //ToDo : What should I do in this case ????
+				} else { // Alreaday stopped
 					mode = MODE_WRITE;
 					writeCmd = Command.START;
+					isBypass = false;
 					myDebug("Stop NG"); //Already Stopped
 				}
 				break;
@@ -455,10 +459,9 @@ public class Gateway extends Thread {
 											cmdArr[2].length() + Constant.SEP.length() +
 											cmdArr[3].length() + Constant.SEP.length() , response.length()-Constant.EOP.length()));
 				collectCdataPacket(cdataPacket);
-				writeCmd = Command.BYPASS;
 				break;
 			default:
-				if (!writeCmd.getName().equals(Constant.BYPASS)) {
+				if (!isBypass) {
 					serialTimer = System.currentTimeMillis();
 					invalidCnt++;
 					myDebug("[Unknown Command] " + cmdArr[0] + ":" + invalidCnt);
