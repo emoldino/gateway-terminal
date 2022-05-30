@@ -19,6 +19,6 @@ public class CdataPacket {
     }
 
     public String toString() {
-        return "cdataPacket : [" + counterId + "][" + index + "] [" + total + "] " + data;
+        return "cdataPacket : [" + counterId + "][" + index + "][" + total + "] " + data;
     }
 }

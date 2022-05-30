@@ -421,7 +421,7 @@ public class Gateway extends Thread {
 	public void sendStop() {
 		Gateway.instance.sendTextFrame(Gateway.instance.out, Constant.SOP + Constant.STOP+ Constant.EOP);
 	}
-	private void parseResponse(String response) throws Exception {
+	public void parseResponse(String response) throws Exception {
 		myDebug("received from BLE receiver : " + response);
 		String cmd = response.substring(Constant.SOP.length(), response.length()-Constant.EOP.length());
 		String[] cmdArr = cmd.split(Constant.SEP);
@@ -460,18 +460,23 @@ public class Gateway extends Thread {
 											cmdArr[3].length() + Constant.SEP.length() , response.length()-Constant.EOP.length()));
 				collectCdataPacket(cdataPacket);
 				break;
+			case Constant.INVALID:
+				mode = MODE_WRITE;
+				writeCmd = Command.STOP;
+				break;
 			default:
 				if (!isBypass) {
 					serialTimer = System.currentTimeMillis();
 					invalidCnt++;
 					myDebug("[Unknown Command] " + cmdArr[0] + ":" + invalidCnt);
-					if (invalidCnt > 3) {
+					if (invalidCnt > 7) {
 						mode = MODE_WRITE;
 						writeCmd = Command.STOP;
 						invalidCnt = 0;
 					}
 				} else { //Bypass
-					writeCmd = Command.STOP;
+//					mode = MODE_WRITE;
+//					writeCmd = Command.STOP;
 				}
 		}
 	}
@@ -489,7 +494,7 @@ public class Gateway extends Thread {
 		updateRawdata(jsonObject.toString());
 	}
 	private void collectCdataPacket(CdataPacket cdataPacket) throws Exception {
-		myDebug(cdataPacket.toString());
+		myDebug("cdataPacket : [" + cdataPacket.getCounterId() + "][" + cdataPacket.getIndex() + "][" + cdataPacket.getTotal() + "] " + cdataPacket.getData());
 		if (cdataPacket.getIndex() == 1) {
 			counterCdataMap.remove(cdataPacket.getCounterId());
 			if (cdataPacket.getIndex() == cdataPacket.getTotal()) {
@@ -523,20 +528,23 @@ public class Gateway extends Thread {
 	}
 	private StringBuffer _lastStr = new StringBuffer();
 	public void myDebug(String str) {
-		if( !_lastStr.toString().equals(str)) {
-			System.out.println(MYDBG +LocalDateTime.now().format(DateTimeFormatter.ofPattern(" yyyy-MM-dd HH:mm:ss.SSS "))+ str);
-			_lastStr.delete(0, _lastStr.length());
-			_lastStr.append(str);		
-		}
-		
-		saveLog(_lastStr);
-		
+//		if( !_lastStr.toString().equals(str)) {
+//			System.out.println(MYDBG +LocalDateTime.now().format(DateTimeFormatter.ofPattern(" yyyy-MM-dd HH:mm:ss.SSS "))+ str);
+//			_lastStr.delete(0, _lastStr.length());
+//			_lastStr.append(str);
+//		}
+//
+//		saveLog(_lastStr);
+
+		String logStr = MYDBG +LocalDateTime.now().format(DateTimeFormatter.ofPattern(" yyyy-MM-dd HH:mm:ss.SSS "))+ str;
+		System.out.println(logStr);
+		saveLog(logStr);
 	}
 	
 	private String lastDay = "";
 	String currDir = "";
 	
-	public void saveLog(StringBuffer strbuffer) {
+	public void saveLog(String logStr /* StringBuffer strbuffer */) {
 		
 		if(currDir.isEmpty()) {
 			currDir = System.getProperty("user.dir");
@@ -566,7 +574,8 @@ public class Gateway extends Thread {
 			if(file.isFile() && file.canWrite()){
 				
                 //쓰기
-                bufferedWriter.write(strbuffer.toString());
+                //bufferedWriter.write(strbuffer.toString());
+				bufferedWriter.write(logStr.toString());
                 //개행문자쓰기
                 bufferedWriter.newLine();
                 
