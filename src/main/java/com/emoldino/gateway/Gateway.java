@@ -93,6 +93,7 @@ public class Gateway extends Thread {
 	private String mode = MODE_WRITE;
 
 	private Command writeCmd = Command.START;
+	private Ack ack = Ack.OK;
 
 	private boolean isBypass = false;
 
@@ -329,7 +330,7 @@ public class Gateway extends Thread {
 							break;
 							case Constant.CDATA: {
 								myDebug("[write] send cmd = " + writeCmd.getName());
-								sendAck(Command.CDATA, Ack.OK);
+								sendAck(Command.CDATA, ack);
 								set_serialWatchdog(1000);
 							}
 							break;
@@ -355,7 +356,6 @@ public class Gateway extends Thread {
 						if (System.currentTimeMillis() - serialTimer < get_serialWatchdog()) {
 
 							myDebug("[read] Time out!! -----------------");
-							System.out.println("");
 							continue;
 						}
 
@@ -407,8 +407,10 @@ public class Gateway extends Thread {
 						}
 					}
 				}
+				ack = Ack.OK;
 			} catch(Exception ex) {
 				ex.printStackTrace();
+				ack = Ack.NG;
 			}
 	
 		} /* ----------- while */
@@ -422,7 +424,7 @@ public class Gateway extends Thread {
 		Gateway.instance.sendTextFrame(Gateway.instance.out, Constant.SOP + Constant.STOP+ Constant.EOP);
 	}
 	public void parseResponse(String response) throws Exception {
-		myDebug("received from BLE receiver : " + response);
+		myDebug("received Command from BLE receiver : " + response);
 		String cmd = response.substring(Constant.SOP.length(), response.length()-Constant.EOP.length());
 		String[] cmdArr = cmd.split(Constant.SEP);
 		switch(cmdArr[0]) {
@@ -475,8 +477,7 @@ public class Gateway extends Thread {
 						invalidCnt = 0;
 					}
 				} else { //Bypass
-//					mode = MODE_WRITE;
-//					writeCmd = Command.STOP;
+					serialTimer = System.currentTimeMillis();
 				}
 		}
 	}
@@ -485,6 +486,8 @@ public class Gateway extends Thread {
 		String datetime = LocalDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
 		String ackResponse = Constant.SOP + cmd.getName() + Constant.SEP + ack.getName() + Constant.SEP + Constant.TIME + Constant.SEP + datetime + Constant.EOP;
 		sendTextFrame(out, ackResponse);
+		serialTimer = System.currentTimeMillis();
+		set_serialWatchdog(100);
 	}
 
 	private void sendCdataToMms(CdataPacket cdata) throws Exception {
@@ -502,49 +505,61 @@ public class Gateway extends Thread {
 			} else {
 				counterCdataMap.put(cdataPacket.getCounterId(), cdataPacket);
 			}
-			mode = MODE_WRITE;
-			writeCmd = Command.CDATA;
+			sendAck(Command.CDATA, Ack.OK);
 		} else {
 			CdataPacket cdata = counterCdataMap.get(cdataPacket.getCounterId());
 			if (cdata == null) {
+				// error case but save
+				cdata = cdataPacket;
+				cdata.setData("#[" + (cdataPacket.getIndex()-1) + "]#" + cdata.getData());
+				counterCdataMap.put(cdata.getCounterId(), cdata);
+				myDebug("[ERROR] The previous cdata packet is null : Please check protocols...");
 				sendAck(Command.CDATA, Ack.NG);
-				throw new Exception("The previous cdata packet is null : Please check protocols...");
-			}
-			if (cdataPacket.getIndex() != cdata.getIndex()+1 || cdataPacket.getTotal() != cdata.getTotal()) {
+			} else if (cdataPacket.getIndex() != cdata.getIndex()+1 || cdataPacket.getTotal() != cdata.getTotal()) {
+
+				// error case but save
+				cdata.setIndex(cdataPacket.getIndex());
+				cdata.setData(cdata.getData() + "#[" + (cdata.getIndex()+1) + "]#" + cdataPacket.getData());
+				myDebug("cdata : " + cdata.getData());
+				counterCdataMap.put(cdata.getCounterId(), cdata);
+				myDebug("[ERROR] The cdata packet oder is broken...");
 				sendAck(Command.CDATA, Ack.NG);
-				throw new Exception("The cdata packet oder is broken...");
+			} else {
+				cdata.setIndex(cdataPacket.getIndex());
+				cdata.setData(cdata.getData() + cdataPacket.getData());
+				myDebug("cdata : " + cdata.getData());
+				counterCdataMap.put(cdata.getCounterId(), cdata);
+				sendAck(Command.CDATA, Ack.OK);
 			}
-			cdata.setIndex(cdataPacket.getIndex());
-			cdata.setData(cdata.getData() + cdataPacket.getData());
-			myDebug("cdata : " + cdata.getData());
-			counterCdataMap.put(cdata.getCounterId(), cdata);
 
 			if (cdata.getIndex() == cdata.getTotal()) {
 				sendCdataToMms(cdata);
 			}
-			mode = MODE_WRITE;
-			writeCmd = Command.CDATA;
 		}
 	}
 	private StringBuffer _lastStr = new StringBuffer();
+
+	private String _oldStr = "";
+
 	public void myDebug(String str) {
 //		if( !_lastStr.toString().equals(str)) {
 //			System.out.println(MYDBG +LocalDateTime.now().format(DateTimeFormatter.ofPattern(" yyyy-MM-dd HH:mm:ss.SSS "))+ str);
 //			_lastStr.delete(0, _lastStr.length());
 //			_lastStr.append(str);
+//			saveLog(_lastStr);
 //		}
-//
-//		saveLog(_lastStr);
 
-		String logStr = MYDBG +LocalDateTime.now().format(DateTimeFormatter.ofPattern(" yyyy-MM-dd HH:mm:ss.SSS "))+ str;
-		System.out.println(logStr);
-		saveLog(logStr);
+		if(!_oldStr.equals(str)) {
+			System.out.println(MYDBG +LocalDateTime.now().format(DateTimeFormatter.ofPattern(" yyyy-MM-dd HH:mm:ss.SSS "))+ str);
+			_oldStr = str;
+			saveLog(_oldStr);
+		}
 	}
 	
 	private String lastDay = "";
 	String currDir = "";
 	
-	public void saveLog(String logStr /* StringBuffer strbuffer */) {
+	public void saveLog(String str) {
 		
 		if(currDir.isEmpty()) {
 			currDir = System.getProperty("user.dir");
@@ -574,8 +589,7 @@ public class Gateway extends Thread {
 			if(file.isFile() && file.canWrite()){
 				
                 //쓰기
-                //bufferedWriter.write(strbuffer.toString());
-				bufferedWriter.write(logStr.toString());
+                bufferedWriter.write(str);
                 //개행문자쓰기
                 bufferedWriter.newLine();
                 
